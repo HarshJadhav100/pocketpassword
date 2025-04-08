@@ -1,4 +1,3 @@
-
 const CACHE_NAME = 'pocket-password-pal-v1';
 const urlsToCache = [
   '/',
@@ -12,10 +11,11 @@ const urlsToCache = [
 
 // Install event - cache assets
 self.addEventListener('install', event => {
+  console.log('[Service Worker] Install event triggered');
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => {
-        console.log('Opened cache');
+        console.log('[Service Worker] Opened cache and caching assets');
         return cache.addAll(urlsToCache);
       })
   );
@@ -24,14 +24,15 @@ self.addEventListener('install', event => {
 
 // Activate event - clean up old caches
 self.addEventListener('activate', event => {
+  console.log('[Service Worker] Activate event triggered');
   event.waitUntil(
     caches.keys().then(cacheNames => {
       return Promise.all(
         cacheNames.filter(cacheName => {
-          return cacheName !== CACHE_NAME;
-        }).map(cacheName => {
-          return caches.delete(cacheName);
-        })
+          const toDelete = cacheName !== CACHE_NAME;
+          if (toDelete) console.log(`[Service Worker] Deleting old cache: ${cacheName}`);
+          return toDelete;
+        }).map(cacheName => caches.delete(cacheName))
       );
     })
   );
@@ -40,45 +41,44 @@ self.addEventListener('activate', event => {
 
 // Fetch event - respond with cache first, then network
 self.addEventListener('fetch', event => {
-  // Skip Supabase API requests from caching - we always want fresh data
+  console.log(`[Service Worker] Fetch event for: ${event.request.url}`);
+  
   if (event.request.url.includes('supabase.co')) {
+    console.log('[Service Worker] Skipping cache for Supabase API call');
     return;
   }
 
   event.respondWith(
     caches.match(event.request)
       .then(response => {
-        // Cache hit - return the response from the cached version
         if (response) {
+          console.log('[Service Worker] Cache hit:', event.request.url);
           return response;
         }
-        
-        // Not in cache - return the result from the live server
-        // and cache it for later
-        return fetch(event.request).then(
-          response => {
-            // Check if we received a valid response
-            if (!response || response.status !== 200 || response.type !== 'basic') {
-              return response;
-            }
 
-            // Clone the response as it's a stream that can only be consumed once
-            const responseToCache = response.clone();
-
-            caches.open(CACHE_NAME)
-              .then(cache => {
-                cache.put(event.request, responseToCache);
-              });
-
+        console.log('[Service Worker] Cache miss, fetching:', event.request.url);
+        return fetch(event.request).then(response => {
+          if (!response || response.status !== 200 || response.type !== 'basic') {
+            console.log('[Service Worker] Invalid response, not caching');
             return response;
           }
-        );
+
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME)
+            .then(cache => {
+              cache.put(event.request, responseToCache);
+              console.log('[Service Worker] Cached new response:', event.request.url);
+            });
+
+          return response;
+        });
       })
   );
 });
 
 // Background sync event - for offline data syncing
 self.addEventListener('sync', event => {
+  console.log(`[Service Worker] Sync event triggered: ${event.tag}`);
   if (event.tag === 'sync-passwords') {
     event.waitUntil(syncPasswords());
   }
@@ -86,20 +86,15 @@ self.addEventListener('sync', event => {
 
 // Function to sync passwords from IndexedDB to Supabase when online
 async function syncPasswords() {
-  // This would be implemented with IndexedDB
-  console.log('Syncing passwords from offline storage');
-  
-  // In a real implementation, this would:
-  // 1. Open IndexedDB
-  // 2. Get pending password changes
-  // 3. Send them to Supabase
-  // 4. Clear the pending changes
+  console.log('[Service Worker] Syncing passwords from offline storage');
+  // Your IndexedDB + Supabase logic goes here
 }
 
 // Push notification event
 self.addEventListener('push', event => {
+  console.log('[Service Worker] Push event received');
   const data = event.data ? event.data.json() : {};
-  
+
   const options = {
     body: data.body || 'New notification from Pocket Password Pal',
     icon: '/icons/icon-192x192.png',
@@ -108,7 +103,7 @@ self.addEventListener('push', event => {
       url: data.url || '/'
     }
   };
-  
+
   event.waitUntil(
     self.registration.showNotification(data.title || 'Pocket Password Pal', options)
   );
@@ -116,18 +111,20 @@ self.addEventListener('push', event => {
 
 // Notification click event
 self.addEventListener('notificationclick', event => {
+  console.log('[Service Worker] Notification click event');
   event.notification.close();
-  
-  // This looks to see if the current is already open and focuses if it is
+
   event.waitUntil(
     clients.matchAll({ type: 'window' }).then(clientList => {
       for (const client of clientList) {
         if (client.url === event.notification.data.url && 'focus' in client) {
+          console.log('[Service Worker] Focusing existing window');
           return client.focus();
         }
       }
-      
+
       if (clients.openWindow) {
+        console.log('[Service Worker] Opening new window');
         return clients.openWindow(event.notification.data.url || '/');
       }
     })
